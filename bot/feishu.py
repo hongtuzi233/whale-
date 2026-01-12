@@ -113,3 +113,40 @@ def parse_avg_fill(order_resp: Dict) -> Dict[str, float]:
         "quote_qty": cummulative_quote_qty,
         "update_time": update_time,
     }
+
+
+def send_error_notification(webhook_url: str, *, title: str, message: str, timezone: str) -> None:
+    headers = {"Content-Type": "application/json"}
+    content = {
+        "msg_type": "interactive",
+        "card": {
+            "header": {"title": {"tag": "plain_text", "content": title}},
+            "elements": [
+                {
+                    "tag": "div",
+                    "fields": [
+                        {
+                            "is_short": False,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**时间**\n{format_time(datetime.now().timestamp() * 1000, timezone)}",
+                            },
+                        },
+                        {
+                            "is_short": False,
+                            "text": {
+                                "tag": "lark_md",
+                                "content": f"**异常信息**\n{message}",
+                            },
+                        },
+                    ],
+                }
+            ],
+        },
+    }
+    try:
+        resp = requests.post(webhook_url, headers=headers, json=content, timeout=10)
+        resp.raise_for_status()
+        logger.info("Feishu error notification sent")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to send Feishu error notification: %s", exc)

@@ -8,7 +8,7 @@ from time import sleep
 
 from bot.binance_client import BinanceService
 from bot.config import BotConfig
-from bot.feishu import parse_avg_fill, send_trade_notification
+from bot.feishu import parse_avg_fill, send_error_notification, send_trade_notification
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +127,12 @@ class StrategyRunner:
                 self.run_once()
             except Exception as exc:  # noqa: BLE001
                 logger.exception("本轮执行异常: %s", exc)
+                send_error_notification(
+                    self.cfg.feishu_webhook_url,
+                    title="BTC 合约策略异常告警",
+                    message=str(exc),
+                    timezone=self.cfg.timezone,
+                )
                 sleep(self.cfg.scheduler.sleep_on_error_seconds)
             else:
                 sleep(self.cfg.interval_minutes * 60)
