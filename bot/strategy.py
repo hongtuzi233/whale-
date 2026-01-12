@@ -110,7 +110,8 @@ class StrategyRunner:
     def run_once(self) -> None:
         mark_price = self.binance.get_mark_price(self.cfg.symbol)
         ma_price = self._calc_ma(self.cfg.symbol)
-        logger.info("Mark=%.2f, MA120=%.2f", mark_price, ma_price)
+        available_balance = self.binance.get_account_balance()
+        logger.info("Mark=%.2f, MA120=%.2f, 可用余额=%.2f USDT", mark_price, ma_price, available_balance)
         if self._should_buy(mark_price, ma_price):
             logger.info("触发开多条件")
             self._buy(mark_price, ma_price)
