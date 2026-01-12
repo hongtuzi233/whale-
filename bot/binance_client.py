@@ -14,7 +14,7 @@ class BinanceService:
         base_url = "https://fapi.binance.com"
         if env == "testnet":
             base_url = "https://testnet.binancefuture.com"
-        self.client = UMFutures(api_key=api_key, api_secret=api_secret, base_url=base_url)
+        self.client = UMFutures(key=api_key, secret=api_secret, base_url=base_url)
 
     def get_mark_price(self, symbol: str) -> float:
         result = self.client.mark_price(symbol=symbol)
