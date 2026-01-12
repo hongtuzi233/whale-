@@ -4,7 +4,7 @@ import decimal
 import logging
 from typing import Dict, List, Tuple
 
-from binance import UMFutures
+from binance.um_futures import UMFutures
 
 logger = logging.getLogger(__name__)
 
