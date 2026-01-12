@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict
 
 import tomllib
@@ -35,7 +35,7 @@ class BotConfig:
     timezone: str = "Asia/Shanghai"
     env: str = "testnet"
     binance: BinanceConfig | None = None
-    scheduler: SchedulerConfig = SchedulerConfig()
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
     @classmethod
     def load(cls, path: str = "config.toml") -> "BotConfig":
