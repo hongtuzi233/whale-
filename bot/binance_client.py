@@ -45,7 +45,7 @@ class BinanceService:
         return 0.0
 
     def get_position(self, symbol: str) -> float:
-        positions = self.client.position_information(symbol=symbol)
+        positions = self.client.position_risk(symbol=symbol)
         if not positions:
             return 0.0
         position_amt = float(positions[0].get("positionAmt", 0))
