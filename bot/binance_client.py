@@ -24,8 +24,11 @@ class BinanceService:
         return self.client.klines(symbol=symbol, interval=interval, limit=limit)
 
     def get_exchange_filters(self, symbol: str) -> Tuple[decimal.Decimal, decimal.Decimal, decimal.Decimal]:
-        info = self.client.exchange_info(symbol=symbol)
-        filters = info["symbols"][0]["filters"]
+        info = self.client.exchange_info()
+        symbol_info = next((item for item in info.get("symbols", []) if item.get("symbol") == symbol), None)
+        if symbol_info is None:
+            raise ValueError(f"未在交易所信息中找到交易对: {symbol}")
+        filters = symbol_info.get("filters", [])
         step_size = decimal.Decimal("0.0")
         min_qty = decimal.Decimal("0.0")
         min_notional = decimal.Decimal("0.0")
@@ -34,7 +37,9 @@ class BinanceService:
                 step_size = decimal.Decimal(f["stepSize"])
                 min_qty = decimal.Decimal(f["minQty"])
             if f["filterType"] == "MIN_NOTIONAL":
-                min_notional = decimal.Decimal(f["notional"])
+                min_notional = decimal.Decimal(f.get("notional", f.get("minNotional", "0.0")))
+            if f["filterType"] == "NOTIONAL":
+                min_notional = decimal.Decimal(f.get("minNotional", "0.0"))
         return step_size, min_qty, min_notional
 
     def get_account_balance(self) -> float:
