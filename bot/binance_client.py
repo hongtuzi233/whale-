@@ -15,6 +15,16 @@ class BinanceService:
         if env == "testnet":
             base_url = "https://testnet.binancefuture.com"
         self.client = UMFutures(key=api_key, secret=api_secret, base_url=base_url)
+        self._is_hedge_mode: bool | None = None
+
+    def is_hedge_mode(self) -> bool:
+        if self._is_hedge_mode is None:
+            mode_info = self.client.get_position_mode()
+            dual_side = mode_info.get("dualSidePosition", False)
+            if isinstance(dual_side, str):
+                dual_side = dual_side.lower() == "true"
+            self._is_hedge_mode = bool(dual_side)
+        return self._is_hedge_mode
 
     def get_mark_price(self, symbol: str) -> float:
         result = self.client.mark_price(symbol=symbol)
@@ -53,6 +63,10 @@ class BinanceService:
         positions = self.client.get_position_risk(symbol=symbol)
         if not positions:
             return 0.0
+        if self.is_hedge_mode():
+            long_position = next((item for item in positions if item.get("positionSide") == "LONG"), {})
+            position_amt = float(long_position.get("positionAmt", 0))
+            return position_amt
         position_amt = float(positions[0].get("positionAmt", 0))
         return position_amt
 
@@ -65,7 +79,15 @@ class BinanceService:
         self.client.change_leverage(symbol=symbol, leverage=leverage)
 
     def place_market_buy(self, symbol: str, quantity: float) -> Dict:
-        return self.client.new_order(symbol=symbol, side="BUY", type="MARKET", quantity=quantity)
+        params = {"symbol": symbol, "side": "BUY", "type": "MARKET", "quantity": quantity}
+        if self.is_hedge_mode():
+            params["positionSide"] = "LONG"
+        return self.client.new_order(**params)
 
     def place_market_sell(self, symbol: str, quantity: float) -> Dict:
-        return self.client.new_order(symbol=symbol, side="SELL", type="MARKET", quantity=quantity, reduceOnly=True)
+        params = {"symbol": symbol, "side": "SELL", "type": "MARKET", "quantity": quantity}
+        if self.is_hedge_mode():
+            params["positionSide"] = "LONG"
+        else:
+            params["reduceOnly"] = True
+        return self.client.new_order(**params)
