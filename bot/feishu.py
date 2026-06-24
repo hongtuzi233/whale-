@@ -22,19 +22,17 @@ def send_trade_notification(
     avg_price: float,
     quantity: float,
     quote_qty: float,
-    mark_price: float,
+    price: float,
     ma_price: float,
     buffer: float,
     timezone: str,
     trade_time: float,
-    leverage: int,
-    margin_mode: str,
 ) -> None:
     headers = {"Content-Type": "application/json"}
     content = {
         "msg_type": "interactive",
         "card": {
-            "header": {"title": {"tag": "plain_text", "content": "BTC 合约策略成交通知"}},
+            "header": {"title": {"tag": "plain_text", "content": "BTC 现货策略成交通知"}},
             "elements": [
                 {
                     "tag": "div",
@@ -72,7 +70,7 @@ def send_trade_notification(
                             "is_short": True,
                             "text": {
                                 "tag": "lark_md",
-                                "content": f"**Mark/MA120**\n{mark_price:.2f} / {ma_price:.2f}",
+                                "content": f"**现价/MA120**\n{price:.2f} / {ma_price:.2f}",
                             },
                         },
                         {
@@ -80,13 +78,6 @@ def send_trade_notification(
                             "text": {
                                 "tag": "lark_md",
                                 "content": f"**buffer**\n{buffer*100:.2f}%",
-                            },
-                        },
-                        {
-                            "is_short": True,
-                            "text": {
-                                "tag": "lark_md",
-                                "content": f"**杠杆/保证金**\n{leverage}x / {margin_mode}",
                             },
                         },
                     ],
@@ -103,10 +94,17 @@ def send_trade_notification(
 
 
 def parse_avg_fill(order_resp: Dict) -> Dict[str, float]:
-    cummulative_quote_qty = float(order_resp.get("cummulativeQuoteQty", 0))
-    executed_qty = float(order_resp.get("executedQty", 0))
+    executed_qty = float(order_resp.get("executedQty", 0) or 0)
+    cummulative_quote_qty = float(order_resp.get("cummulativeQuoteQty", 0) or 0)
+    # 顶层汇总字段缺失或为 0 时，用逐笔成交明细 fills 加总兜底
+    fills = order_resp.get("fills") or []
+    if fills and (executed_qty == 0 or cummulative_quote_qty == 0):
+        executed_qty = sum(float(f.get("qty", 0) or 0) for f in fills)
+        cummulative_quote_qty = sum(
+            float(f.get("price", 0) or 0) * float(f.get("qty", 0) or 0) for f in fills
+        )
     avg_price = cummulative_quote_qty / executed_qty if executed_qty else 0
-    update_time = float(order_resp.get("updateTime", 0) or order_resp.get("transactTime", 0))
+    update_time = float(order_resp.get("updateTime", 0) or order_resp.get("transactTime", 0) or 0)
     return {
         "avg_price": avg_price,
         "executed_qty": executed_qty,

@@ -41,29 +41,38 @@ class StrategyRunner:
             raise ValueError("名义价值不足交易所最小限制，跳过下单")
         return normalized.quantize(step_size)
 
-    def _should_buy(self, mark: float, ma: float) -> bool:
-        return mark > ma * (1 + self.cfg.buffer)
+    def _should_buy(self, price: float, ma: float) -> bool:
+        return price > ma * (1 + self.cfg.buffer)
 
-    def _should_sell(self, mark: float, ma: float) -> bool:
-        return mark < ma * (1 - self.cfg.buffer)
+    def _should_sell(self, price: float, ma: float) -> bool:
+        return price < ma * (1 - self.cfg.buffer)
 
-    def _calculate_order_qty(self, mark_price: float) -> decimal.Decimal:
-        balance = self.binance.get_account_balance()
+    def _calculate_buy_quote_qty(self) -> decimal.Decimal:
+        """现货市价买按花费的 USDT 金额下单，返回拟花费的 USDT 金额。"""
+        balance = self.binance.get_quote_balance(self.cfg.symbol)
         if balance <= self.cfg.min_available_usdt:
             raise ValueError(f"可用余额 {balance} USDT 不足 {self.cfg.min_available_usdt}，不下单")
-        notional = decimal.Decimal(balance * self.cfg.usage_ratio * self.cfg.leverage)
-        qty = notional / decimal.Decimal(mark_price)
-        step_size, min_qty, min_notional = self.binance.get_exchange_filters(self.cfg.symbol)
-        return self._normalize_quantity(qty, decimal.Decimal(mark_price), step_size, min_qty, min_notional)
+        _, _, min_notional = self.binance.get_exchange_filters(self.cfg.symbol)
+        quote_qty = (
+            decimal.Decimal(str(balance)) * decimal.Decimal(str(self.cfg.usage_ratio))
+        ).quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_DOWN)
+        if quote_qty < min_notional:
+            raise ValueError("买入金额不足交易所最小名义价值，跳过下单")
+        return quote_qty
 
-    def _buy(self, mark_price: float, ma_price: float) -> None:
-        position_amt = self.binance.get_position(self.cfg.symbol)
-        if position_amt > 0:
-            logger.info("已持有多仓，跳过重复开仓")
+    def _has_sellable_position(self, price: float) -> bool:
+        """账户里的 BTC 余额是否达到可交易下限，相当于现货的"是否持仓"。"""
+        base_balance = self.binance.get_base_balance(self.cfg.symbol)
+        _, min_qty, min_notional = self.binance.get_exchange_filters(self.cfg.symbol)
+        qty = decimal.Decimal(str(base_balance))
+        return qty >= min_qty and qty * decimal.Decimal(str(price)) >= min_notional
+
+    def _buy(self, price: float, ma_price: float) -> None:
+        if self._has_sellable_position(price):
+            logger.info("已持有现货 BTC，跳过重复买入")
             return
-        self.binance.ensure_leverage_and_margin(self.cfg.symbol, self.cfg.leverage, self.cfg.margin_mode)
-        qty = self._calculate_order_qty(mark_price)
-        order_resp = self.binance.place_market_buy(self.cfg.symbol, float(qty))
+        quote_qty = self._calculate_buy_quote_qty()
+        order_resp = self.binance.place_market_buy_quote(self.cfg.symbol, float(quote_qty))
         fills = parse_avg_fill(order_resp)
         send_trade_notification(
             self.cfg.feishu_webhook_url,
@@ -71,24 +80,27 @@ class StrategyRunner:
             avg_price=fills["avg_price"],
             quantity=fills["executed_qty"],
             quote_qty=fills["quote_qty"],
-            mark_price=mark_price,
+            price=price,
             ma_price=ma_price,
             buffer=self.cfg.buffer,
             timezone=self.cfg.timezone,
             trade_time=fills["update_time"],
-            leverage=self.cfg.leverage,
-            margin_mode=self.cfg.margin_mode,
         )
         logger.info("买入成功: %s", fills)
 
-    def _sell(self, mark_price: float, ma_price: float) -> None:
-        position_amt = self.binance.get_position(self.cfg.symbol)
-        if position_amt <= 0:
-            logger.info("当前无多仓，跳过平仓")
+    def _sell(self, price: float, ma_price: float) -> None:
+        if not self._has_sellable_position(price):
+            logger.info("当前无可卖现货，跳过卖出")
             return
-        qty = decimal.Decimal(abs(position_amt))
+        base_balance = self.binance.get_base_balance(self.cfg.symbol)
         step_size, min_qty, min_notional = self.binance.get_exchange_filters(self.cfg.symbol)
-        normalized_qty = self._normalize_quantity(qty, decimal.Decimal(mark_price), step_size, min_qty, min_notional)
+        normalized_qty = self._normalize_quantity(
+            decimal.Decimal(str(base_balance)),
+            decimal.Decimal(str(price)),
+            step_size,
+            min_qty,
+            min_notional,
+        )
         order_resp = self.binance.place_market_sell(self.cfg.symbol, float(normalized_qty))
         fills = parse_avg_fill(order_resp)
         send_trade_notification(
@@ -97,27 +109,25 @@ class StrategyRunner:
             avg_price=fills["avg_price"],
             quantity=fills["executed_qty"],
             quote_qty=fills["quote_qty"],
-            mark_price=mark_price,
+            price=price,
             ma_price=ma_price,
             buffer=self.cfg.buffer,
             timezone=self.cfg.timezone,
             trade_time=fills["update_time"],
-            leverage=self.cfg.leverage,
-            margin_mode=self.cfg.margin_mode,
         )
         logger.info("卖出成功: %s", fills)
 
     def run_once(self) -> None:
-        mark_price = self.binance.get_mark_price(self.cfg.symbol)
+        price = self.binance.get_price(self.cfg.symbol)
         ma_price = self._calc_ma(self.cfg.symbol)
-        available_balance = self.binance.get_account_balance()
-        logger.info("Mark=%.2f, MA120=%.2f, 可用余额=%.2f USDT", mark_price, ma_price, available_balance)
-        if self._should_buy(mark_price, ma_price):
-            logger.info("触发开多条件")
-            self._buy(mark_price, ma_price)
-        elif self._should_sell(mark_price, ma_price):
-            logger.info("触发平多条件")
-            self._sell(mark_price, ma_price)
+        available_balance = self.binance.get_quote_balance(self.cfg.symbol)
+        logger.info("现价=%.2f, MA120=%.2f, 可用余额=%.2f USDT", price, ma_price, available_balance)
+        if self._should_buy(price, ma_price):
+            logger.info("触发买入条件")
+            self._buy(price, ma_price)
+        elif self._should_sell(price, ma_price):
+            logger.info("触发卖出条件")
+            self._sell(price, ma_price)
         else:
             logger.info("价格在缓冲区内，不操作")
 
@@ -129,7 +139,7 @@ class StrategyRunner:
                 logger.exception("本轮执行异常: %s", exc)
                 send_error_notification(
                     self.cfg.feishu_webhook_url,
-                    title="BTC 合约策略异常告警",
+                    title="BTC 现货策略异常告警",
                     message=str(exc),
                     timezone=self.cfg.timezone,
                 )

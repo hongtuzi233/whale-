@@ -1,7 +1,5 @@
 symbol = "BTCUSDT"
 interval_minutes = 10
-leverage = 3
-margin_mode = "ISOLATED"
 order_type = "MARKET"
 usage_ratio = 0.99
 min_available_usdt = 500
@@ -10,7 +8,7 @@ ma_period = 120
 ma_kline_interval = "1d"
 feishu_webhook_url = "https://open.feishu.cn/xxxx"
 timezone = "Asia/Shanghai"
-env = "testnet" # 可选：prod / testnet
+env = "testnet" # 可选：prod / testnet（testnet 使用现货测试网 testnet.binance.vision，需在该站点单独申请测试网 API Key）
 
 [binance]
 api_key = "YOUR_API_KEY"

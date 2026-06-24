@@ -4,38 +4,48 @@ import decimal
 import logging
 from typing import Dict, List, Tuple
 
-from binance.um_futures import UMFutures
+from binance.spot import Spot
 
 logger = logging.getLogger(__name__)
 
 
 class BinanceService:
+    """币安现货 REST 封装：行情、账户余额、市价下单。"""
+
     def __init__(self, api_key: str, api_secret: str, env: str = "testnet"):
-        base_url = "https://fapi.binance.com"
+        base_url = "https://api.binance.com"
         if env == "testnet":
-            base_url = "https://testnet.binancefuture.com"
-        self.client = UMFutures(key=api_key, secret=api_secret, base_url=base_url)
-        self._is_hedge_mode: bool | None = None
+            base_url = "https://testnet.binance.vision"
+        self.client = Spot(api_key=api_key, api_secret=api_secret, base_url=base_url)
+        self._assets_cache: Dict[str, Tuple[str, str]] = {}
 
-    def is_hedge_mode(self) -> bool:
-        if self._is_hedge_mode is None:
-            mode_info = self.client.get_position_mode()
-            dual_side = mode_info.get("dualSidePosition", False)
-            if isinstance(dual_side, str):
-                dual_side = dual_side.lower() == "true"
-            self._is_hedge_mode = bool(dual_side)
-        return self._is_hedge_mode
+    def get_price(self, symbol: str) -> float:
+        """最新成交价（现货没有合约的标记价，用最新成交价代替）。"""
+        result = self.client.ticker_price(symbol=symbol)
+        return float(result["price"])
 
-    def get_mark_price(self, symbol: str) -> float:
-        result = self.client.mark_price(symbol=symbol)
-        return float(result["markPrice"])
-
-    def get_klines(self, symbol: str, interval: str, limit: int) -> List[Dict]:
+    def get_klines(self, symbol: str, interval: str, limit: int) -> List[list]:
         return self.client.klines(symbol=symbol, interval=interval, limit=limit)
 
-    def get_exchange_filters(self, symbol: str) -> Tuple[decimal.Decimal, decimal.Decimal, decimal.Decimal]:
-        info = self.client.exchange_info()
-        symbol_info = next((item for item in info.get("symbols", []) if item.get("symbol") == symbol), None)
+    def get_symbol_assets(self, symbol: str) -> Tuple[str, str]:
+        """返回交易对的 (基础资产, 报价资产)，例如 BTCUSDT -> (BTC, USDT)。"""
+        if symbol not in self._assets_cache:
+            info = self.client.exchange_info(symbol=symbol)
+            symbol_info = next(
+                (item for item in info.get("symbols", []) if item.get("symbol") == symbol), None
+            )
+            if symbol_info is None:
+                raise ValueError(f"未在交易所信息中找到交易对: {symbol}")
+            self._assets_cache[symbol] = (symbol_info["baseAsset"], symbol_info["quoteAsset"])
+        return self._assets_cache[symbol]
+
+    def get_exchange_filters(
+        self, symbol: str
+    ) -> Tuple[decimal.Decimal, decimal.Decimal, decimal.Decimal]:
+        info = self.client.exchange_info(symbol=symbol)
+        symbol_info = next(
+            (item for item in info.get("symbols", []) if item.get("symbol") == symbol), None
+        )
         if symbol_info is None:
             raise ValueError(f"未在交易所信息中找到交易对: {symbol}")
         filters = symbol_info.get("filters", [])
@@ -47,47 +57,36 @@ class BinanceService:
                 step_size = decimal.Decimal(f["stepSize"])
                 min_qty = decimal.Decimal(f["minQty"])
             if f["filterType"] == "MIN_NOTIONAL":
-                min_notional = decimal.Decimal(f.get("notional", f.get("minNotional", "0.0")))
+                min_notional = decimal.Decimal(f.get("minNotional", "0.0"))
             if f["filterType"] == "NOTIONAL":
                 min_notional = decimal.Decimal(f.get("minNotional", "0.0"))
         return step_size, min_qty, min_notional
 
-    def get_account_balance(self) -> float:
-        balances = self.client.balance()
-        for b in balances:
-            if b.get("asset") == "USDT":
-                return float(b.get("availableBalance", 0))
+    def _get_free_balance(self, asset: str) -> float:
+        account = self.client.account()
+        for b in account.get("balances", []):
+            if b.get("asset") == asset:
+                return float(b.get("free", 0))
         return 0.0
 
-    def get_position(self, symbol: str) -> float:
-        positions = self.client.get_position_risk(symbol=symbol)
-        if not positions:
-            return 0.0
-        if self.is_hedge_mode():
-            long_position = next((item for item in positions if item.get("positionSide") == "LONG"), {})
-            position_amt = float(long_position.get("positionAmt", 0))
-            return position_amt
-        position_amt = float(positions[0].get("positionAmt", 0))
-        return position_amt
+    def get_quote_balance(self, symbol: str) -> float:
+        """报价资产（USDT）可用余额。"""
+        _, quote_asset = self.get_symbol_assets(symbol)
+        return self._get_free_balance(quote_asset)
 
-    def ensure_leverage_and_margin(self, symbol: str, leverage: int, margin_mode: str) -> None:
-        try:
-            self.client.change_margin_type(symbol=symbol, marginType=margin_mode.upper())
-        except Exception as exc:  # noqa: BLE001
-            if "No need to change margin type" not in str(exc):
-                raise
-        self.client.change_leverage(symbol=symbol, leverage=leverage)
+    def get_base_balance(self, symbol: str) -> float:
+        """基础资产（BTC）可用余额，相当于现货的"持仓"。"""
+        base_asset, _ = self.get_symbol_assets(symbol)
+        return self._get_free_balance(base_asset)
 
-    def place_market_buy(self, symbol: str, quantity: float) -> Dict:
-        params = {"symbol": symbol, "side": "BUY", "type": "MARKET", "quantity": quantity}
-        if self.is_hedge_mode():
-            params["positionSide"] = "LONG"
-        return self.client.new_order(**params)
+    def place_market_buy_quote(self, symbol: str, quote_order_qty: float) -> Dict:
+        """以指定报价资产金额（USDT）市价买入。newOrderRespType=FULL 确保返回成交明细。"""
+        return self.client.new_order(
+            symbol=symbol, side="BUY", type="MARKET", quoteOrderQty=quote_order_qty, newOrderRespType="FULL"
+        )
 
     def place_market_sell(self, symbol: str, quantity: float) -> Dict:
-        params = {"symbol": symbol, "side": "SELL", "type": "MARKET", "quantity": quantity}
-        if self.is_hedge_mode():
-            params["positionSide"] = "LONG"
-        else:
-            params["reduceOnly"] = True
-        return self.client.new_order(**params)
+        """以指定基础资产数量（BTC）市价卖出。newOrderRespType=FULL 确保返回成交明细。"""
+        return self.client.new_order(
+            symbol=symbol, side="SELL", type="MARKET", quantity=quantity, newOrderRespType="FULL"
+        )

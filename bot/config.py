@@ -23,8 +23,6 @@ class SchedulerConfig:
 class BotConfig:
     symbol: str = "BTCUSDT"
     interval_minutes: int = 10
-    leverage: int = 3
-    margin_mode: str = "ISOLATED"
     order_type: str = "MARKET"
     usage_ratio: float = 0.99
     min_available_usdt: float = 500.0
@@ -58,8 +56,6 @@ class BotConfig:
         config = cls(
             symbol=os.getenv("SYMBOL", data.get("symbol", "BTCUSDT")),
             interval_minutes=int(os.getenv("INTERVAL_MINUTES", data.get("interval_minutes", 10))),
-            leverage=int(os.getenv("LEVERAGE", data.get("leverage", 3))),
-            margin_mode=os.getenv("MARGIN_MODE", data.get("margin_mode", "ISOLATED")),
             order_type=os.getenv("ORDER_TYPE", data.get("order_type", "MARKET")),
             usage_ratio=float(os.getenv("USAGE_RATIO", data.get("usage_ratio", 0.99))),
             min_available_usdt=float(os.getenv("MIN_AVAILABLE_USDT", data.get("min_available_usdt", 500))),
@@ -83,7 +79,5 @@ def _validate_config(cfg: BotConfig) -> None:
         raise ValueError("Feishu webhook URL is required for notifications.")
     if cfg.env not in {"prod", "testnet"}:
         raise ValueError("env must be either 'prod' or 'testnet'.")
-    if cfg.margin_mode.upper() not in {"ISOLATED", "CROSSED"}:
-        raise ValueError("margin_mode must be ISOLATED or CROSSED.")
     if cfg.order_type.upper() != "MARKET":
         raise ValueError("V1 仅支持市价单 (MARKET)。")

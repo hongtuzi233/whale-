@@ -13,7 +13,7 @@ logging.basicConfig(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="BTC 合约 MA120 策略")
+    parser = argparse.ArgumentParser(description="BTC 现货 MA120 策略")
     parser.add_argument("--config", default="config.toml", help="配置文件路径")
     parser.add_argument("--once", action="store_true", help="只运行一轮（便于调试）")
     return parser.parse_args()
