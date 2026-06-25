@@ -117,6 +117,27 @@ class StrategyRunner:
         )
         logger.info("卖出成功: %s", fills)
 
+    def startup_check(self) -> None:
+        """启动自检：本策略卖出会卖光账户内全部 BTC，建议使用只放 USDT 的专用账户。
+        若启动时已检测到 BTC 余额，给出警告（仅提示，不阻止运行）。"""
+        try:
+            base_asset, _ = self.binance.get_symbol_assets(self.cfg.symbol)
+            base_balance = self.binance.get_base_balance(self.cfg.symbol)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("启动自检读取账户余额失败（不影响运行）：%s", exc)
+            return
+        if base_balance > 0:
+            logger.warning(
+                "⚠️ 启动检测到账户已持有 %.8f %s。注意：触发卖出信号时本策略会卖光账户内全部 %s。"
+                "若这是专用账户的首次启动，请确认账户内没有其它来源的 %s；若为已持仓后的重启，可忽略本提示。",
+                base_balance,
+                base_asset,
+                base_asset,
+                base_asset,
+            )
+        else:
+            logger.info("启动自检通过：当前无 %s 持仓。", base_asset)
+
     def run_once(self) -> None:
         price = self.binance.get_price(self.cfg.symbol)
         ma_price = self._calc_ma(self.cfg.symbol)

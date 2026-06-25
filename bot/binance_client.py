@@ -52,14 +52,20 @@ class BinanceService:
         step_size = decimal.Decimal("0.0")
         min_qty = decimal.Decimal("0.0")
         min_notional = decimal.Decimal("0.0")
+        market_step_size = decimal.Decimal("0.0")
         for f in filters:
             if f["filterType"] == "LOT_SIZE":
                 step_size = decimal.Decimal(f["stepSize"])
                 min_qty = decimal.Decimal(f["minQty"])
+            if f["filterType"] == "MARKET_LOT_SIZE":
+                market_step_size = decimal.Decimal(f.get("stepSize", "0"))
             if f["filterType"] == "MIN_NOTIONAL":
                 min_notional = decimal.Decimal(f.get("minNotional", "0.0"))
             if f["filterType"] == "NOTIONAL":
                 min_notional = decimal.Decimal(f.get("minNotional", "0.0"))
+        # 现货市价单同时受 LOT_SIZE 与 MARKET_LOT_SIZE 约束，stepSize 取更严格(更大)的一档
+        if market_step_size > step_size:
+            step_size = market_step_size
         return step_size, min_qty, min_notional
 
     def _get_free_balance(self, asset: str) -> float:

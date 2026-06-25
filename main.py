@@ -23,6 +23,7 @@ def main() -> None:
     args = parse_args()
     cfg = BotConfig.load(args.config)
     runner = StrategyRunner(cfg)
+    runner.startup_check()
     if args.once:
         runner.run_once()
     else:
